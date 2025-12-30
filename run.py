@@ -18,8 +18,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "input_dir",
         nargs="?",
-        default="inputs",
-        help="Directory with input files to iterate over (default: inputs).",
+        default="input",
+        help="Directory with input files to iterate over (default: input).",
     )
     parser.add_argument(
         "--prompt",
@@ -29,8 +29,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output-dir",
-        default="runs",
-        help="Directory for prompts and logs (default: runs).",
+        default="out",
+        help="Directory for prompts and logs (default: output).",
     )
     parser.add_argument(
         "--sample-run",
