@@ -28,16 +28,6 @@ def parse_args() -> argparse.Namespace:
         help="Prompt template file (default: TASK.md).",
     )
     parser.add_argument(
-        "--placeholder",
-        default="{{INPUT_FILE}}",
-        help="Placeholder token in the prompt template (default: {{INPUT_FILE}}).",
-    )
-    parser.add_argument(
-        "--pattern",
-        default="*",
-        help="Glob pattern for input files (default: *).",
-    )
-    parser.add_argument(
         "--output-dir",
         default="runs",
         help="Directory for prompts and logs (default: runs).",
@@ -59,25 +49,18 @@ def ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
 
-def list_input_files(input_dir: str, pattern: str) -> list[str]:
+def list_input_files(input_dir: str) -> list[str]:
     entries = []
     with os.scandir(input_dir) as it:
         for entry in it:
             if not entry.is_file():
                 continue
-            if not fnmatch.fnmatch(entry.name, pattern):
-                continue
             entries.append(entry.path)
     return sorted(entries, key=lambda p: os.path.basename(p))
 
 
-def render_prompt(
-    template: str,
-    placeholder: str,
-    input_file: str,
-    input_rel_path: str,
-) -> str:
-    rendered = template.replace(placeholder, input_rel_path)
+def render_prompt(template: str, input_file: str, input_rel_path: str) -> str:
+    rendered = template.replace("{{INPUT_FILE}}", input_rel_path)
     rendered = rendered.replace("{input_file}", input_file)
     rendered = rendered.replace("{input_path}", input_rel_path)
     return rendered
@@ -117,14 +100,15 @@ def main() -> int:
     args = parse_args()
 
     template = load_template(args.prompt)
-    if args.placeholder not in template:
+    if "{{INPUT_FILE}}" not in template:
         print(
-            f"Error: placeholder token {args.placeholder!r} not found in {args.prompt}.",
+            "Error: placeholder token '{{INPUT_FILE}}' not found in "
+            f"{args.prompt}.",
             file=sys.stderr,
         )
         return 2
 
-    input_files = list_input_files(args.input_dir, args.pattern)
+    input_files = list_input_files(args.input_dir)
     if not input_files:
         print(f"No input files found in {args.input_dir!r}.", file=sys.stderr)
         return 1
@@ -136,6 +120,8 @@ def main() -> int:
     ensure_dir(logs_dir)
 
     agents: Deque[str] = deque(["claude", "codex", "gemini"])
+    succeeded = 0
+    failed = 0
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
     for input_path in input_files:
@@ -143,7 +129,6 @@ def main() -> int:
         input_rel_path = os.path.relpath(input_path, start=base_dir)
         prompt_text = render_prompt(
             template=template,
-            placeholder=args.placeholder,
             input_file=input_file,
             input_rel_path=input_rel_path,
         )
@@ -191,6 +176,7 @@ def main() -> int:
             if result.returncode == 0:
                 with open(output_path, "w", encoding="utf-8") as out_handle:
                     out_handle.write(result.stdout)
+                succeeded += 1
                 break
 
             attempts.append((agent, log_path))
@@ -199,24 +185,29 @@ def main() -> int:
                 agents.append(failed_agent)
                 continue
 
+            failed += 1
             print(
                 f"Agent {agent!r} failed for {input_file!r} "
                 f"(exit {result.returncode}). See {log_path}.",
                 file=sys.stderr,
             )
+            print(f"Completed: {succeeded} succeeded, {failed} failed.")
             return result.returncode
         else:
             last_attempt = attempts[-1] if attempts else ("unknown", "unknown")
+            failed += 1
             print(
                 f"All agents rate limited for {input_file!r}. "
                 f"Last attempt: {last_attempt[0]!r} ({last_attempt[1]}).",
                 file=sys.stderr,
             )
+            print(f"Completed: {succeeded} succeeded, {failed} failed.")
             return 3
 
         if args.sample_run:
             break
 
+    print(f"Completed: {succeeded} succeeded, {failed} failed.")
     return 0
 
 
