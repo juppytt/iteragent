@@ -29,13 +29,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output-dir",
-        default="out",
+        default="output",
         help="Directory for prompts and logs (default: output).",
     )
     parser.add_argument(
         "--sample-run",
         action="store_true",
         help="Run only the first matching input file.",
+    )
+    parser.add_argument(
+        "--force-rerun",
+        action="store_true",
+        help="Rerun even if output already exists.",
     )
     return parser.parse_args()
 
@@ -127,6 +132,15 @@ def main() -> int:
     for input_path in input_files:
         input_file = os.path.basename(input_path)
         input_rel_path = os.path.relpath(input_path, start=base_dir)
+        output_path = os.path.join(
+            output_dir, f"{os.path.splitext(input_file)[0]}.json"
+        )
+        if os.path.exists(output_path) and not args.force_rerun:
+            print(f"  ▶ Skipping {input_rel_path} (output exists).")
+            succeeded += 1
+            if args.sample_run:
+                break
+            continue
         prompt_text = render_prompt(
             template=template,
             input_file=input_file,
@@ -136,9 +150,6 @@ def main() -> int:
         prompt_path = os.path.join(prompts_dir, f"{input_file}.prompt.md")
         with open(prompt_path, "w", encoding="utf-8") as handle:
             handle.write(prompt_text)
-        output_path = os.path.join(
-            output_dir, f"{os.path.splitext(input_file)[0]}.json"
-        )
 
         attempts: List[Tuple[str, str]] = []
         for _ in range(len(agents)):
