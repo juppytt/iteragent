@@ -14,7 +14,7 @@ from typing import Deque, List, Tuple
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Vibe Analyzer: run multiple agents over input files with a task."
+            "iteragent: Apply a single prompt across multiple files in one sweep."
         )
     )
     parser.add_argument(
@@ -328,7 +328,7 @@ def main() -> int:
         if args.sample_run:
             break
 
-    print(f"Completed: {succeeded} succeeded, {failed} failed.")
+    print(f"Completed: {succeeded}/{len(input_files)} succeeded, {failed}/{len(input_files)} failed.")
     return 0
 
 

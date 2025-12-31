@@ -1,6 +1,6 @@
-# vibe-analyzer
+# iteragent
 
-Analyze multiple input files for the same task using Claude, Codex, and Gemini, rotating on rate limits.
+Analyze multiple input files for the same task using Claude, Codex, and Gemini, rotating on failures.
 
 ## Usage
 Provide input directory and task with a `{{INPUT_FILE}}` placeholder. Samples live in `sample_summarize/input` and `sample_summarize/TASK.md`, plus `sample_web/input` and `sample_web/TASK.md`.
