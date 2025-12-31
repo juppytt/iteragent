@@ -5,6 +5,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from collections import deque
 from typing import Deque, List, Tuple
 
@@ -227,66 +228,80 @@ def main() -> int:
             handle.write(prompt_text)
 
         attempts: List[Tuple[str, str]] = []
-        for _ in range(len(agents)):
-            agent = agents[0]
-            agent_log_dir = os.path.join(logs_dir, agent)
-            ensure_dir(agent_log_dir)
-            log_path = os.path.join(agent_log_dir, f"{input_file}.log")
+        backoff = 5
+        while True:
+            rate_limited_all = True
+            for _ in range(len(agents)):
+                agent = agents[0]
+                agent_log_dir = os.path.join(logs_dir, agent)
+                ensure_dir(agent_log_dir)
+                log_path = os.path.join(agent_log_dir, f"{input_file}.log")
 
-            print(f"  ▶ Trying {agent} for {input_rel_path}...")
-            if agent == "claude":
-                cmd_list, result = run_claude(prompt_text, cmd_prefix)
-            elif agent == "gemini":
-                cmd_list, result = run_gemini(prompt_text, cmd_prefix)
-            else:
-                cmd_list, result = run_codex(prompt_text, cmd_prefix)
-            combined_output = "\n".join(
-                part for part in [result.stdout.strip(), result.stderr.strip()] if part
-            )
-            with open(log_path, "w", encoding="utf-8") as log_handle:
-                log_handle.write(
-                    f"# Command: {' '.join(shlex.quote(part) for part in cmd_list)}\n"
+                print(f"  ▶ Trying {agent} for {input_rel_path}...")
+                if agent == "claude":
+                    cmd_list, result = run_claude(prompt_text, cmd_prefix)
+                elif agent == "gemini":
+                    cmd_list, result = run_gemini(prompt_text, cmd_prefix)
+                else:
+                    cmd_list, result = run_codex(prompt_text, cmd_prefix)
+                combined_output = "\n".join(
+                    part for part in [result.stdout.strip(), result.stderr.strip()] if part
                 )
-                log_handle.write(f"# Exit code: {result.returncode}\n\n")
-                if result.stdout:
-                    log_handle.write("## STDOUT\n")
-                    log_handle.write(result.stdout)
-                    if not result.stdout.endswith("\n"):
-                        log_handle.write("\n")
-                if result.stderr:
-                    log_handle.write("\n## STDERR\n")
-                    log_handle.write(result.stderr)
-                    if not result.stderr.endswith("\n"):
-                        log_handle.write("\n")
+                with open(log_path, "w", encoding="utf-8") as log_handle:
+                    log_handle.write(
+                        f"# Command: {' '.join(shlex.quote(part) for part in cmd_list)}\n"
+                    )
+                    log_handle.write(f"# Exit code: {result.returncode}\n\n")
+                    if result.stdout:
+                        log_handle.write("## STDOUT\n")
+                        log_handle.write(result.stdout)
+                        if not result.stdout.endswith("\n"):
+                            log_handle.write("\n")
+                    if result.stderr:
+                        log_handle.write("\n## STDERR\n")
+                        log_handle.write(result.stderr)
+                        if not result.stderr.endswith("\n"):
+                            log_handle.write("\n")
+
+                if result.returncode == 0:
+                    with open(output_path, "w", encoding="utf-8") as out_handle:
+                        out_handle.write(result.stdout)
+                    succeeded += 1
+                    rate_limited_all = False
+                    break
+
+                attempts.append((agent, log_path))
+                if is_rate_limited(combined_output):
+                    failed_agent = agents.popleft()
+                    agents.append(failed_agent)
+                    continue
+
+                rate_limited_all = False
+                failed += 1
+                print(
+                    f"Agent {agent!r} failed for {input_file!r} "
+                    f"(exit {result.returncode}). See {log_path}.",
+                    file=sys.stderr,
+                )
+                print(f"Completed: {succeeded} succeeded, {failed} failed.")
+                return result.returncode
 
             if result.returncode == 0:
-                with open(output_path, "w", encoding="utf-8") as out_handle:
-                    out_handle.write(result.stdout)
-                succeeded += 1
                 break
 
-            attempts.append((agent, log_path))
-            if is_rate_limited(combined_output):
-                failed_agent = agents.popleft()
-                agents.append(failed_agent)
+            if rate_limited_all:
+                last_attempt = attempts[-1] if attempts else ("unknown", "unknown")
+                print(
+                    f"All agents rate limited for {input_file!r}. "
+                    f"Last attempt: {last_attempt[0]!r} ({last_attempt[1]}). "
+                    f"Sleeping {backoff}s before retrying.",
+                    file=sys.stderr,
+                )
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 60)
                 continue
 
             failed += 1
-            print(
-                f"Agent {agent!r} failed for {input_file!r} "
-                f"(exit {result.returncode}). See {log_path}.",
-                file=sys.stderr,
-            )
-            print(f"Completed: {succeeded} succeeded, {failed} failed.")
-            return result.returncode
-        else:
-            last_attempt = attempts[-1] if attempts else ("unknown", "unknown")
-            failed += 1
-            print(
-                f"All agents rate limited for {input_file!r}. "
-                f"Last attempt: {last_attempt[0]!r} ({last_attempt[1]}).",
-                file=sys.stderr,
-            )
             print(f"Completed: {succeeded} succeeded, {failed} failed.")
             return 3
 
