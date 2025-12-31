@@ -12,7 +12,7 @@ from typing import Deque, List, Tuple
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Vibe Analyzer: run multiple agents over input files with a prompt template."
+            "Vibe Analyzer: run multiple agents over input files with a task."
         )
     )
     parser.add_argument(
@@ -22,10 +22,9 @@ def parse_args() -> argparse.Namespace:
         help="Directory with input files to iterate over (default: input).",
     )
     parser.add_argument(
-        "--prompt",
-        "--prompts",
+        "--task",
         default="TASK.md",
-        help="Prompt template file (default: TASK.md).",
+        help="Task file (default: TASK.md).",
     )
     parser.add_argument(
         "--output-dir",
@@ -47,10 +46,15 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run agents in bubblewrap with input read-only and output writable.",
     )
+    parser.add_argument(
+        "--agents",
+        default="claude,codex,gemini",
+        help="Comma-separated agent list (default: claude,codex,gemini).",
+    )
     return parser.parse_args()
 
 
-def load_template(path: str) -> str:
+def load_task(path: str) -> str:
     with open(path, "r", encoding="utf-8") as handle:
         return handle.read()
 
@@ -59,9 +63,11 @@ def ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
 
-def list_input_files(input_dir: str) -> list[str]:
+def list_input_files(input_path: str) -> list[str]:
+    if os.path.isfile(input_path):
+        return [input_path]
     entries = []
-    with os.scandir(input_dir) as it:
+    with os.scandir(input_path) as it:
         for entry in it:
             if not entry.is_file():
                 continue
@@ -69,8 +75,8 @@ def list_input_files(input_dir: str) -> list[str]:
     return sorted(entries, key=lambda p: os.path.basename(p))
 
 
-def render_prompt(template: str, input_file: str, input_rel_path: str) -> str:
-    rendered = template.replace("{{INPUT_FILE}}", input_rel_path)
+def render_task(task: str, input_file: str, input_rel_path: str) -> str:
+    rendered = task.replace("{{INPUT_FILE}}", input_rel_path)
     rendered = rendered.replace("{input_file}", input_file)
     rendered = rendered.replace("{input_path}", input_rel_path)
     return rendered
@@ -156,11 +162,11 @@ def is_rate_limited(output: str) -> bool:
 def main() -> int:
     args = parse_args()
 
-    template = load_template(args.prompt)
-    if "{{INPUT_FILE}}" not in template:
+    task = load_task(args.task)
+    if "{{INPUT_FILE}}" not in task:
         print(
             "Error: placeholder token '{{INPUT_FILE}}' not found in "
-            f"{args.prompt}.",
+            f"{args.task}.",
             file=sys.stderr,
         )
         return 2
@@ -180,7 +186,11 @@ def main() -> int:
     ensure_dir(prompts_dir)
     ensure_dir(logs_dir)
 
-    agents: Deque[str] = deque(["claude", "codex", "gemini"])
+    agents_list = [agent.strip() for agent in args.agents.split(",") if agent.strip()]
+    if not agents_list:
+        print("Error: --agents must include at least one agent.", file=sys.stderr)
+        return 2
+    agents: Deque[str] = deque(agents_list)
 
     succeeded = 0
     failed = 0
@@ -206,8 +216,8 @@ def main() -> int:
             if args.sample_run:
                 break
             continue
-        prompt_text = render_prompt(
-            template=template,
+        prompt_text = render_task(
+            task=task,
             input_file=input_file,
             input_rel_path=input_rel_path,
         )
