@@ -126,7 +126,13 @@ def build_bwrap_prefix(input_dir: str, output_dir: str) -> list[str]:
 def run_claude(
     prompt_text: str, cmd_prefix: list[str]
 ) -> tuple[list[str], subprocess.CompletedProcess[str]]:
-    cmd = ["claude", "-p", prompt_text, "--allowedTools", "Bash,BashOutput,Read,Grep,Glob,Edit,Update,Task,TodoWrite,WebFetch,WebSearch"]
+    cmd = ["claude", 
+           "-p", 
+           prompt_text, 
+           "--allowedTools", 
+           "Bash,BashOutput,Read,Grep,Glob,Edit,Update,Task,TodoWrite,WebFetch,WebSearch",
+           "--output-format",
+           "json"]
     wrapped = [*cmd_prefix, *cmd]
     return wrapped, subprocess.run(wrapped, capture_output=True, text=True)
 
@@ -149,7 +155,12 @@ def run_codex(
 def run_gemini(
     prompt_text: str, cmd_prefix: list[str]
 ) -> tuple[list[str], subprocess.CompletedProcess[str]]:
-    cmd = ["gemini", "-p", prompt_text, "-y", "--output-format", "text"]
+    cmd = ["gemini", 
+           "-p", 
+           prompt_text, 
+           "-y", 
+           "--output-format", 
+           "json"]
     wrapped = [*cmd_prefix, *cmd]
     return wrapped, subprocess.run(wrapped, capture_output=True, text=True)
 
