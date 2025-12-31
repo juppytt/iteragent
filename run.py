@@ -2,6 +2,7 @@
 import argparse
 import os
 import shlex
+import re
 import shutil
 import subprocess
 import sys
@@ -163,10 +164,33 @@ def run_gemini(
     return wrapped, subprocess.run(wrapped, capture_output=True, text=True)
 
 
-def is_rate_limited(output: str) -> bool:
-    lowered = output.lower()
-    tokens = ["rate limit", "rate-limit", "too many requests", "429"]
-    return any(token in lowered for token in tokens)
+def extract_json_output(output: str) -> str:
+    if not output:
+        return output
+    # Prefer fenced JSON blocks; if multiple, take the last (often the final answer)
+    matches = re.findall(
+        r"```[ \t]*json[ \t]*\n(.*?)\n```",
+        output,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    if matches:
+        return matches[-1].strip()
+
+    # Any fenced object/array blocks (no language tag); take the last
+    matches = re.findall(
+        r"```[^\n]*\n(\{.*?\}|\[.*?\])\n```",
+        output,
+        flags=re.DOTALL,
+    )
+    if matches:
+        return matches[-1].strip()
+    
+    # Bare JSON object/array anywhere; pick the largest span
+    matches = re.findall(r"(\{.*\}|\[.*\])", output, flags=re.DOTALL)
+    if matches:
+        return max((m.strip() for m in matches), key=len)
+
+    return output
 
 
 def main() -> int:
@@ -253,9 +277,6 @@ def main() -> int:
                     cmd_list, result = run_gemini(prompt_text, cmd_prefix)
                 else:
                     cmd_list, result = run_codex(prompt_text, cmd_prefix)
-                combined_output = "\n".join(
-                    part for part in [result.stdout.strip(), result.stderr.strip()] if part
-                )
                 with open(log_path, "w", encoding="utf-8") as log_handle:
                     log_handle.write(
                         f"# Command: {' '.join(shlex.quote(part) for part in cmd_list)}\n"
@@ -273,27 +294,17 @@ def main() -> int:
                             log_handle.write("\n")
 
                 if result.returncode == 0:
+                    cleaned_output = extract_json_output(result.stdout)
                     with open(output_path, "w", encoding="utf-8") as out_handle:
-                        out_handle.write(result.stdout)
+                        out_handle.write(cleaned_output)
                     succeeded += 1
                     rate_limited_all = False
                     break
 
                 attempts.append((agent, log_path))
-                if is_rate_limited(combined_output):
-                    failed_agent = agents.popleft()
-                    agents.append(failed_agent)
-                    continue
-
-                rate_limited_all = False
-                failed += 1
-                print(
-                    f"Agent {agent!r} failed for {input_file!r} "
-                    f"(exit {result.returncode}). See {log_path}.",
-                    file=sys.stderr,
-                )
-                print(f"Completed: {succeeded} succeeded, {failed} failed.")
-                return result.returncode
+                failed_agent = agents.popleft()
+                agents.append(failed_agent)
+                continue
 
             if result.returncode == 0:
                 break
