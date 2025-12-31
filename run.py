@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 import argparse
-import fnmatch
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 from collections import deque
@@ -42,6 +42,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Rerun even if output already exists.",
     )
+    parser.add_argument(
+        "--bwrap",
+        action="store_true",
+        help="Run agents in bubblewrap with input read-only and output writable.",
+    )
     return parser.parse_args()
 
 
@@ -71,28 +76,75 @@ def render_prompt(template: str, input_file: str, input_rel_path: str) -> str:
     return rendered
 
 
-def run_claude(prompt_text: str) -> tuple[list[str], subprocess.CompletedProcess[str]]:
-    cmd = ["claude", "-p", prompt_text, "--allowedTools", "Read,Grep,Glob,Edit,Update"]
-    return cmd, subprocess.run(cmd, capture_output=True, text=True)
+def build_bwrap_prefix(input_dir: str, output_dir: str) -> list[str]:
+    prefix = ["bwrap", "--unshare-all", "--share-net"]
+    for path in ["/usr", "/bin", "/lib", "/lib64", "/etc", "/run"]:
+        if os.path.exists(path):
+            prefix.extend(["--ro-bind", path, path])
+    prefix.extend(
+        [
+            "--dev",
+            "/dev",
+            "--proc",
+            "/proc",
+            "--tmpfs",
+            "/tmp",
+            "--tmpfs",
+            "/var/tmp",
+            "--ro-bind",
+            input_dir,
+            input_dir,
+            "--bind",
+            output_dir,
+            output_dir,
+            "--setenv",
+            "HOME",
+            output_dir,
+            "--setenv",
+            "XDG_CACHE_HOME",
+            os.path.join(output_dir, ".cache"),
+            "--setenv",
+            "XDG_CONFIG_HOME",
+            os.path.join(output_dir, ".config"),
+            "--setenv",
+            "XDG_DATA_HOME",
+            os.path.join(output_dir, ".local", "share"),
+            "--chdir",
+            output_dir,
+        ]
+    )
+    return prefix
 
 
-def run_codex(prompt_path: str, agent: str) -> tuple[list[str], subprocess.CompletedProcess[str]]:
+def run_claude(
+    prompt_text: str, cmd_prefix: list[str]
+) -> tuple[list[str], subprocess.CompletedProcess[str]]:
+    cmd = ["claude", "-p", prompt_text, "--allowedTools", "Bash,BashOutput,Read,Grep,Glob,Edit,Update,Task,TodoWrite,WebFetch,WebSearch"]
+    wrapped = [*cmd_prefix, *cmd]
+    return wrapped, subprocess.run(wrapped, capture_output=True, text=True)
+
+
+def run_codex(
+    prompt_text: str, cmd_prefix: list[str]
+) -> tuple[list[str], subprocess.CompletedProcess[str]]:
     cmd = [
         "codex",
-        "run",
-        "--agent",
-        agent,
-        "--read",
-        "--network",
-        "--prompt-file",
-        prompt_path,
+        "exec",
+        "--sandbox",
+        "danger-full-access",
+        "--",
+        prompt_text
     ]
-    return cmd, subprocess.run(cmd, capture_output=True, text=True)
+    wrapped = [*cmd_prefix, *cmd]
+    return wrapped, subprocess.run(wrapped, capture_output=True, text=True)
 
 
-def run_gemini(prompt_text: str) -> tuple[list[str], subprocess.CompletedProcess[str]]:
+def run_gemini(
+    prompt_text: str, cmd_prefix: list[str]
+) -> tuple[list[str], subprocess.CompletedProcess[str]]:
     cmd = ["gemini", "-p", prompt_text, "-y", "--output-format", "text"]
-    return cmd, subprocess.run(cmd, capture_output=True, text=True)
+    wrapped = [*cmd_prefix, *cmd]
+    return wrapped, subprocess.run(wrapped, capture_output=True, text=True)
 
 
 def is_rate_limited(output: str) -> bool:
@@ -113,25 +165,38 @@ def main() -> int:
         )
         return 2
 
-    input_files = list_input_files(args.input_dir)
+    input_dir = os.path.abspath(args.input_dir)
+    output_dir = os.path.abspath(args.output_dir)
+    input_files = list_input_files(input_dir)
     if not input_files:
-        print(f"No input files found in {args.input_dir!r}.", file=sys.stderr)
+        print(f"No input files found in {input_dir!r}.", file=sys.stderr)
         return 1
 
-    output_dir = args.output_dir
+    if args.bwrap and shutil.which("bwrap") is None:
+        print("Error: bubblewrap (bwrap) not found in PATH.", file=sys.stderr)
+        return 2
     prompts_dir = os.path.join(output_dir, "prompts")
     logs_dir = os.path.join(output_dir, "logs")
     ensure_dir(prompts_dir)
     ensure_dir(logs_dir)
 
     agents: Deque[str] = deque(["claude", "codex", "gemini"])
+
     succeeded = 0
     failed = 0
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
+    cmd_prefix = (
+        build_bwrap_prefix(input_dir=input_dir, output_dir=output_dir)
+        if args.bwrap
+        else []
+    )
     for input_path in input_files:
         input_file = os.path.basename(input_path)
-        input_rel_path = os.path.relpath(input_path, start=base_dir)
+        if args.bwrap:
+            input_rel_path = input_path
+        else:
+            input_rel_path = os.path.relpath(input_path, start=base_dir)
         output_path = os.path.join(
             output_dir, f"{os.path.splitext(input_file)[0]}.json"
         )
@@ -160,11 +225,11 @@ def main() -> int:
 
             print(f"  ▶ Trying {agent} for {input_rel_path}...")
             if agent == "claude":
-                cmd_list, result = run_claude(prompt_text)
+                cmd_list, result = run_claude(prompt_text, cmd_prefix)
             elif agent == "gemini":
-                cmd_list, result = run_gemini(prompt_text)
+                cmd_list, result = run_gemini(prompt_text, cmd_prefix)
             else:
-                cmd_list, result = run_codex(prompt_path, agent)
+                cmd_list, result = run_codex(prompt_text, cmd_prefix)
             combined_output = "\n".join(
                 part for part in [result.stdout.strip(), result.stderr.strip()] if part
             )
