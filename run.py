@@ -131,8 +131,7 @@ def run_claude(
            prompt_text, 
            "--allowedTools", 
            "Bash,BashOutput,Read,Grep,Glob,Edit,Update,Task,TodoWrite,WebFetch,WebSearch",
-           "--output-format",
-           "json"]
+        ]
     wrapped = [*cmd_prefix, *cmd]
     return wrapped, subprocess.run(wrapped, capture_output=True, text=True)
 
@@ -158,9 +157,8 @@ def run_gemini(
     cmd = ["gemini", 
            "-p", 
            prompt_text, 
-           "-y", 
-           "--output-format", 
-           "json"]
+           "-y"
+           ]
     wrapped = [*cmd_prefix, *cmd]
     return wrapped, subprocess.run(wrapped, capture_output=True, text=True)
 
