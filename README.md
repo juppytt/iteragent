@@ -16,4 +16,6 @@ python run.py <input_dir> --task <task_file>
 - `--sample-run`: run only the first input file
 - `--force-rerun`: rerun even if output already exists
 - `--bwrap`: run agents with bubblewrap (input read-only, output writable)
+- `--bwrap-ro-bind DIR`: additional read-only directory to bind in bubblewrap (can be used multiple times)
+- `--bwrap-bind DIR`: additional writable directory to bind in bubblewrap (can be used multiple times)
 - `--agents`: comma-separated agent list (default: `claude,codex,gemini`)

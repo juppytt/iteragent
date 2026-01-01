@@ -53,6 +53,18 @@ def parse_args() -> argparse.Namespace:
         default="claude,codex,gemini",
         help="Comma-separated agent list (default: claude,codex,gemini).",
     )
+    parser.add_argument(
+        "--bwrap-ro-bind",
+        action="append",
+        metavar="DIR",
+        help="Additional read-only directory to bind in bubblewrap (can be used multiple times).",
+    )
+    parser.add_argument(
+        "--bwrap-bind",
+        action="append",
+        metavar="DIR",
+        help="Additional writable directory to bind in bubblewrap (can be used multiple times).",
+    )
     return parser.parse_args()
 
 
@@ -84,7 +96,12 @@ def render_task(task: str, input_file: str, input_rel_path: str) -> str:
     return rendered
 
 
-def build_bwrap_prefix(input_dir: str, output_dir: str) -> list[str]:
+def build_bwrap_prefix(
+    input_dir: str,
+    output_dir: str,
+    ro_bind_dirs: list[str] | None = None,
+    bind_dirs: list[str] | None = None,
+) -> list[str]:
     prefix = ["bwrap", "--unshare-all", "--share-net"]
     for path in ["/usr", "/bin", "/lib", "/lib64", "/etc", "/run"]:
         if os.path.exists(path):
@@ -105,6 +122,25 @@ def build_bwrap_prefix(input_dir: str, output_dir: str) -> list[str]:
             "--bind",
             output_dir,
             output_dir,
+        ]
+    )
+
+    # Add additional read-only binds
+    if ro_bind_dirs:
+        for dir_path in ro_bind_dirs:
+            abs_path = os.path.abspath(dir_path)
+            if os.path.exists(abs_path):
+                prefix.extend(["--ro-bind", abs_path, abs_path])
+
+    # Add additional writable binds
+    if bind_dirs:
+        for dir_path in bind_dirs:
+            abs_path = os.path.abspath(dir_path)
+            if os.path.exists(abs_path):
+                prefix.extend(["--bind", abs_path, abs_path])
+
+    prefix.extend(
+        [
             "--setenv",
             "HOME",
             output_dir,
@@ -231,7 +267,12 @@ def main() -> int:
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
     cmd_prefix = (
-        build_bwrap_prefix(input_dir=input_dir, output_dir=output_dir)
+        build_bwrap_prefix(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            ro_bind_dirs=args.bwrap_ro_bind,
+            bind_dirs=args.bwrap_bind,
+        )
         if args.bwrap
         else []
     )
